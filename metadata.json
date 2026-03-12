@@ -1,0 +1,5 @@
+{
+  "name": "TerraGrid MVP",
+  "description": "A single-player MVP of a map-based territory conquest game using OpenStreetMap and H3 hex grids.",
+  "requestFramePermissions": ["geolocation"]
+}
