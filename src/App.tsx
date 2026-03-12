@@ -221,11 +221,8 @@ const getH3ResForZoom = (zoom: number): number => {
   if (zoom <= 4) return 1;
   if (zoom <= 6) return 2;
   if (zoom <= 8) return 3;
-  if (zoom <= 10) return 4;
-  if (zoom <= 12) return 5;
-  if (zoom <= 14) return 6;
-  if (zoom <= 15) return 7;
-  return 10; // Always use resolution 10 for zoom 16+
+  if (zoom <= 9) return 4;
+  return 7; // Always use resolution 7 for zoom 10+
 };
 
 // Check if a hex or any of its parent hexes are owned
@@ -280,7 +277,7 @@ export default function App() {
     }
   });
   const [visibleHexIds, setVisibleHexIds] = useState<string[]>([]);
-  const [zoomLevel, setZoomLevel] = useState<number>(15);
+  const [zoomLevel, setZoomLevel] = useState<number>(12);
   const [center, setCenter] = useState<[number, number]>([51.505, -0.09]);
   const [mapReady, setMapReady] = useState(false);
 
@@ -327,7 +324,7 @@ export default function App() {
   const handleBoundsChange = useCallback((bounds: any, zoom: number) => {
     setZoomLevel(zoom);
 
-    if (zoom < 16) {
+    if (zoom < 10) {
       setVisibleHexIds([]);
       return;
     }
@@ -386,7 +383,7 @@ export default function App() {
   }, []);
 
   const handleHexClick = (hexId: string) => {
-    if (zoomLevel < 16 || !selectedCountry) return;
+    if (zoomLevel < 10 || !selectedCountry) return;
     // Instantly claim the hex for the player
     setHexes(prev => ({ ...prev, [hexId]: 'player' }));
   };
@@ -399,17 +396,17 @@ export default function App() {
     <div className="relative w-full h-screen overflow-hidden bg-slate-900 font-sans">
       {/* Map Layer */}
       <div className="absolute inset-0 z-0">
-        <MapContainer center={center} zoom={15} maxZoom={19} className="w-full h-full" zoomControl={false}>
+        <MapContainer center={center} zoom={12} maxZoom={12} className="w-full h-full" zoomControl={false}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            maxZoom={19}
+            maxZoom={12}
           />
           <MapEvents onBoundsChange={handleBoundsChange} />
           
           {(() => {
             let hexesToRender = visibleHexIds;
-            if (zoomLevel < 16) {
+            if (zoomLevel < 10) {
               // Only render the exactly claimed hexes when zoomed out
               hexesToRender = Object.keys(hexes);
             }
@@ -417,7 +414,7 @@ export default function App() {
             return hexesToRender.map(hexId => {
               const boundary = cellToBoundary(hexId);
               const positions: LatLngExpression[] = boundary.map(p => [p[0], p[1]]);
-              const owner = zoomLevel >= 16 ? getHexOwner(hexId, hexes) : hexes[hexId];
+              const owner = zoomLevel >= 10 ? getHexOwner(hexId, hexes) : hexes[hexId];
               
               let fillColor = '#334155'; // slate-700
               let fillOpacity = 0.1;
@@ -425,8 +422,8 @@ export default function App() {
 
               if (owner) {
                 fillColor = players[owner as PlayerId].color;
-                fillOpacity = zoomLevel >= 16 ? 0.4 : 1.0;
-                color = zoomLevel >= 16 ? players[owner as PlayerId].color : 'transparent';
+                fillOpacity = zoomLevel >= 10 ? 0.4 : 1.0;
+                color = zoomLevel >= 10 ? players[owner as PlayerId].color : 'transparent';
               }
 
               return (
@@ -435,7 +432,7 @@ export default function App() {
                   positions={positions}
                   pathOptions={{
                     color,
-                    weight: zoomLevel >= 16 ? 2 : 0,
+                    weight: zoomLevel >= 10 ? 2 : 0,
                     fillColor,
                     fillOpacity,
                   }}
@@ -454,10 +451,10 @@ export default function App() {
           <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-xl pointer-events-auto flex flex-col gap-2">
             <h1 className="text-2xl font-bold text-white tracking-tight">TerraGrid</h1>
             <p className="text-sm text-slate-400">
-              {zoomLevel >= 16 ? "Click any hex to claim it!" : "Zoom in to level 16 to claim hexes"}
+              {zoomLevel >= 10 ? "Click any hex to claim it!" : "Zoom in to level 10 to claim hexes"}
             </p>
             <p className="text-xs text-slate-500">
-              {zoomLevel >= 16 ? `Visible Hexes: ${visibleHexIds.length} | ` : ''}Zoom: {zoomLevel}
+              {zoomLevel >= 10 ? `Visible Hexes: ${visibleHexIds.length} | ` : ''}Zoom: {zoomLevel}
             </p>
           </div>
 
