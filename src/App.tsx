@@ -225,21 +225,110 @@ const getH3ResForZoom = (zoom: number): number => {
   return 7; // Always use resolution 7 for zoom 10+
 };
 
-// Check if a hex or any of its parent hexes are owned
-const getHexOwner = (hexId: string, hexes: Record<string, PlayerId>): PlayerId | null => {
-  let current = hexId;
+// --- MOCK DATABASE (Simulating Supabase) ---
+type DbHex = { hex_id: string; owner_id: string; claimed_at: number; country_color: string };
+
+const MOCK_DB = {
+  hexes: {} as Record<string, DbHex>
+};
+
+try {
+  const saved = localStorage.getItem('supabase_mock_hexes');
+  if (saved) MOCK_DB.hexes = JSON.parse(saved);
+} catch (e) {}
+
+const saveDb = () => localStorage.setItem('supabase_mock_hexes', JSON.stringify(MOCK_DB.hexes));
+
+// --- MOCK API ENDPOINTS ---
+type ViewportHex = { cell: string; owner: string | null; color: string | null; isAggregated: boolean; opacity: number };
+
+const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<ViewportHex[]> => {
+  await new Promise(resolve => setTimeout(resolve, 50)); // Simulate network latency
+
+  const targetRes = getH3ResForZoom(zoom);
+  let visibleCells: string[] = [];
   try {
-    let res = getResolution(current);
-    while (res >= 0) {
-      if (hexes[current]) return hexes[current];
-      if (res === 0) break;
-      res--;
-      current = cellToParent(current, res);
-    }
+    visibleCells = polygonToCells(polygon, targetRes, false);
   } catch (e) {
-    // ignore invalid hexes
+    const res0 = getRes0Cells();
+    visibleCells = targetRes === 0 ? res0 : res0.flatMap(c => cellToChildren(c, targetRes));
   }
-  return null;
+
+  visibleCells = visibleCells.slice(0, 3000); // Prevent browser crash
+  const visibleSet = new Set(visibleCells);
+  const results: ViewportHex[] = [];
+
+  if (zoom >= 10) {
+    for (const cell of visibleCells) {
+      const claim = MOCK_DB.hexes[cell];
+      results.push({
+        cell,
+        owner: claim ? claim.owner_id : null,
+        color: claim ? claim.country_color : null,
+        isAggregated: false,
+        opacity: claim ? 0.4 : 0.1
+      });
+    }
+  } else {
+    const aggregated: Record<string, { counts: Record<string, number>, colors: Record<string, string>, totalClaimed: number }> = {};
+
+    for (const [hexId, claim] of Object.entries(MOCK_DB.hexes)) {
+      try {
+        const claimRes = getResolution(hexId);
+        if (claimRes >= targetRes) {
+           const parent = cellToParent(hexId, targetRes);
+           if (visibleSet.has(parent)) {
+             if (!aggregated[parent]) aggregated[parent] = { counts: {}, colors: {}, totalClaimed: 0 };
+             aggregated[parent].counts[claim.owner_id] = (aggregated[parent].counts[claim.owner_id] || 0) + 1;
+             aggregated[parent].colors[claim.owner_id] = claim.country_color;
+             aggregated[parent].totalClaimed++;
+           }
+        }
+      } catch (e) {}
+    }
+
+    for (const cell of visibleCells) {
+      const data = aggregated[cell];
+      if (data) {
+        const dominantOwner = Object.keys(data.counts).reduce((a, b) => data.counts[a] > data.counts[b] ? a : b);
+        results.push({
+          cell,
+          owner: dominantOwner,
+          color: data.colors[dominantOwner],
+          isAggregated: true,
+          opacity: Math.min(0.8, 0.2 + (data.totalClaimed * 0.02))
+        });
+      } else {
+        results.push({
+          cell,
+          owner: null,
+          color: null,
+          isAggregated: true,
+          opacity: 0.05
+        });
+      }
+    }
+  }
+  return results;
+};
+
+const apiClaimHex = async (hexId: string, userId: string, color: string): Promise<DbHex> => {
+  await new Promise(resolve => setTimeout(resolve, 50));
+  if (MOCK_DB.hexes[hexId]) {
+    throw new Error("Hex already claimed");
+  }
+  const newClaim = { hex_id: hexId, owner_id: userId, claimed_at: Date.now(), country_color: color };
+  MOCK_DB.hexes[hexId] = newClaim;
+  saveDb();
+  return newClaim;
+};
+
+const apiGetStats = () => {
+  const stats: Record<string, number> = {};
+  for (const claim of Object.values(MOCK_DB.hexes)) {
+    stats[claim.owner_id] = (stats[claim.owner_id] || 0) + 1;
+  }
+  return stats;
 };
 
 function MapEvents({ onBoundsChange }: { onBoundsChange: (bounds: any, zoom: number) => void }) {
@@ -267,27 +356,16 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const [hexes, setHexes] = useState<Record<string, PlayerId>>(() => {
-    try {
-      const saved = localStorage.getItem('terraGridHexes');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      console.error("Failed to load hexes from local storage", e);
-      return {};
-    }
-  });
-  const [visibleHexIds, setVisibleHexIds] = useState<string[]>([]);
+  const [viewportData, setViewportData] = useState<ViewportHex[]>([]);
+  const [stats, setStats] = useState<Record<string, number>>({});
+  const [isSyncing, setIsSyncing] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(12);
   const [center, setCenter] = useState<[number, number]>([51.505, -0.09]);
   const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('terraGridHexes', JSON.stringify(hexes));
-    } catch (e) {
-      console.error("Failed to save hexes to local storage", e);
-    }
-  }, [hexes]);
+    setStats(apiGetStats());
+  }, []);
 
   useEffect(() => {
     if (selectedCountry) {
@@ -321,13 +399,9 @@ export default function App() {
     }
   }, []);
 
-  const handleBoundsChange = useCallback((bounds: any, zoom: number) => {
+  const handleBoundsChange = useCallback(async (bounds: any, zoom: number) => {
     setZoomLevel(zoom);
-
-    if (zoom < 10) {
-      setVisibleHexIds([]);
-      return;
-    }
+    setIsSyncing(true);
 
     const nw = bounds.getNorthWest();
     const ne = bounds.getNorthEast();
@@ -361,31 +435,33 @@ export default function App() {
     ];
 
     try {
-      const res = getH3ResForZoom(zoom);
-      let cells: string[] = [];
-      try {
-        cells = polygonToCells(polygon, res, false);
-      } catch (e) {
-        // Fallback for antimeridian crossing or whole world
-        if (res <= 2) {
-          const res0 = getRes0Cells();
-          cells = res === 0 ? res0 : res0.flatMap(c => cellToChildren(c, res));
-        } else {
-          throw e;
-        }
-      }
-      // Limit to max 5000 cells to prevent performance issues when zoomed out slightly
-      setVisibleHexIds(cells.slice(0, 5000));
+      const data = await apiGetHexesInBounds(polygon, zoom);
+      setViewportData(data);
     } catch (e) {
-      console.error("Error generating hexes:", e);
-      setVisibleHexIds([]); // Clear hexes if generation fails
+      console.error("Error fetching hexes:", e);
+    } finally {
+      setIsSyncing(false);
     }
   }, []);
 
-  const handleHexClick = (hexId: string) => {
-    if (zoomLevel < 10 || !selectedCountry) return;
-    // Instantly claim the hex for the player
-    setHexes(prev => ({ ...prev, [hexId]: 'player' }));
+  const handleHexClick = async (hexId: string, isAggregated: boolean, currentOwner: string | null) => {
+    if (zoomLevel < 10 || !selectedCountry || isAggregated || currentOwner) return;
+    
+    // Optimistic UI Update
+    setViewportData(prev => prev.map(h => 
+      h.cell === hexId ? { ...h, owner: 'player', color: selectedCountry.color, opacity: 0.4 } : h
+    ));
+
+    try {
+      await apiClaimHex(hexId, 'player', selectedCountry.color);
+      setStats(apiGetStats());
+    } catch (e) {
+      console.error(e);
+      // Revert optimistic update
+      setViewportData(prev => prev.map(h => 
+        h.cell === hexId ? { ...h, owner: null, color: null, opacity: 0.1 } : h
+      ));
+    }
   };
 
   if (!mapReady) {
@@ -405,39 +481,30 @@ export default function App() {
           <MapEvents onBoundsChange={handleBoundsChange} />
           
           {(() => {
-            let hexesToRender = visibleHexIds;
-            if (zoomLevel < 10) {
-              // Only render the exactly claimed hexes when zoomed out
-              hexesToRender = Object.keys(hexes);
-            }
-
-            return hexesToRender.map(hexId => {
-              const boundary = cellToBoundary(hexId);
+            return viewportData.map(hex => {
+              const boundary = cellToBoundary(hex.cell);
               const positions: LatLngExpression[] = boundary.map(p => [p[0], p[1]]);
-              const owner = zoomLevel >= 10 ? getHexOwner(hexId, hexes) : hexes[hexId];
               
               let fillColor = '#334155'; // slate-700
-              let fillOpacity = 0.1;
               let color = '#475569'; // slate-600
 
-              if (owner) {
-                fillColor = players[owner as PlayerId].color;
-                fillOpacity = zoomLevel >= 10 ? 0.4 : 1.0;
-                color = zoomLevel >= 10 ? players[owner as PlayerId].color : 'transparent';
+              if (hex.owner && hex.color) {
+                fillColor = hex.color;
+                color = hex.isAggregated ? 'transparent' : hex.color;
               }
 
               return (
                 <Polygon
-                  key={hexId}
+                  key={hex.cell}
                   positions={positions}
                   pathOptions={{
                     color,
-                    weight: zoomLevel >= 10 ? 2 : 0,
+                    weight: hex.isAggregated ? 1 : (zoomLevel >= 10 ? 2 : 0),
                     fillColor,
-                    fillOpacity,
+                    fillOpacity: hex.opacity,
                   }}
                   eventHandlers={{
-                    click: () => handleHexClick(hexId),
+                    click: () => handleHexClick(hex.cell, hex.isAggregated, hex.owner),
                   }}
                 />
               );
@@ -454,7 +521,8 @@ export default function App() {
               {zoomLevel >= 10 ? "Click any hex to claim it!" : "Zoom in to level 10 to claim hexes"}
             </p>
             <p className="text-xs text-slate-500">
-              {zoomLevel >= 10 ? `Visible Hexes: ${visibleHexIds.length} | ` : ''}Zoom: {zoomLevel}
+              {zoomLevel >= 10 ? `Visible Hexes: ${viewportData.length} | ` : ''}Zoom: {zoomLevel}
+              {isSyncing && <span className="ml-2 text-emerald-400">Syncing...</span>}
             </p>
           </div>
 
@@ -465,7 +533,7 @@ export default function App() {
             </h2>
             <div className="flex flex-col gap-2">
               {Object.values(players).map(p => {
-                const count = Object.values(hexes).filter(ownerId => ownerId === p.id).length;
+                const count = stats[p.id] || 0;
                 return (
                   <div key={p.id} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
