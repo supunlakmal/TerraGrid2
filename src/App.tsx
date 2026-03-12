@@ -375,7 +375,7 @@ export default function App() {
   const [viewportData, setViewportData] = useState<ViewportHex[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [isSyncing, setIsSyncing] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState<number>(12);
+  const [zoomLevel, setZoomLevel] = useState<number>(4);
   const [center, setCenter] = useState<[number, number]>([51.505, -0.09]);
   const [mapReady, setMapReady] = useState(false);
 
@@ -488,7 +488,7 @@ export default function App() {
     <div className="relative w-full h-screen overflow-hidden bg-slate-900 font-sans">
       {/* Map Layer */}
       <div className="absolute inset-0 z-0">
-        <MapContainer center={center} zoom={12} maxZoom={12} className="w-full h-full" zoomControl={false}>
+        <MapContainer center={center} zoom={4} maxZoom={12} className="w-full h-full" zoomControl={false}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
