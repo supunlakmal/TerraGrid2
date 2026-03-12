@@ -547,7 +547,7 @@ export default function App() {
       <div className="absolute top-0 left-0 right-0 p-4 z-10 pointer-events-none">
         <div className="max-w-7xl mx-auto flex justify-between items-start">
           <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-xl pointer-events-auto flex flex-col gap-2">
-            <h1 className="text-2xl font-bold text-white tracking-tight">TerraGrid</h1>
+            <h1 className="text-2xl font-bold text-white tracking-tight">Conquer & Fight Back</h1>
             <p className="text-sm text-slate-400">
               {zoomLevel >= 10 ? "Click any hex to claim it!" : "Zoom in to level 10 to claim hexes"}
             </p>

@@ -1,5 +1,5 @@
 {
-  "name": "TerraGrid MVP",
+  "name": "Conquer & Fight Back",
   "description": "A single-player MVP of a map-based territory conquest game using OpenStreetMap and H3 hex grids.",
   "requestFramePermissions": ["geolocation"]
 }
