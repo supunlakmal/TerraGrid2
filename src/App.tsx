@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MapContainer, TileLayer, Polygon, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Polygon, useMapEvents, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { polygonToCells, cellToBoundary, cellToParent, getResolution, getRes0Cells, cellToChildren } from 'h3-js';
 import { LatLngExpression } from 'leaflet';
@@ -225,8 +225,16 @@ const getH3ResForZoom = (zoom: number): number => {
   return 7; // Always use resolution 7 for zoom 10+
 };
 
+const getFlagEmoji = (countryCode: string) => {
+  const codePoints = countryCode
+    .toUpperCase()
+    .split('')
+    .map(char => 127397 + char.charCodeAt(0));
+  return String.fromCodePoint(...codePoints);
+};
+
 // --- MOCK DATABASE (Simulating Supabase) ---
-type DbHex = { hex_id: string; owner_id: string; claimed_at: number; country_color: string };
+type DbHex = { hex_id: string; owner_id: string; claimed_at: number; country_color: string; country_code?: string; country_name?: string };
 
 const MOCK_DB = {
   hexes: {} as Record<string, DbHex>
@@ -240,7 +248,7 @@ try {
 const saveDb = () => localStorage.setItem('supabase_mock_hexes', JSON.stringify(MOCK_DB.hexes));
 
 // --- MOCK API ENDPOINTS ---
-type ViewportHex = { cell: string; owner: string | null; color: string | null; isAggregated: boolean; opacity: number };
+type ViewportHex = { cell: string; owner: string | null; color: string | null; countryCode: string | null; countryName: string | null; isAggregated: boolean; opacity: number };
 
 const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<ViewportHex[]> => {
   await new Promise(resolve => setTimeout(resolve, 50)); // Simulate network latency
@@ -265,12 +273,14 @@ const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<V
         cell,
         owner: claim ? claim.owner_id : null,
         color: claim ? claim.country_color : null,
+        countryCode: claim ? (claim.country_code || null) : null,
+        countryName: claim ? (claim.country_name || null) : null,
         isAggregated: false,
         opacity: claim ? 0.4 : 0.1
       });
     }
   } else {
-    const aggregated: Record<string, { counts: Record<string, number>, colors: Record<string, string>, totalClaimed: number }> = {};
+    const aggregated: Record<string, { counts: Record<string, number>, colors: Record<string, string>, codes: Record<string, string>, names: Record<string, string>, totalClaimed: number }> = {};
 
     for (const [hexId, claim] of Object.entries(MOCK_DB.hexes)) {
       try {
@@ -278,9 +288,11 @@ const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<V
         if (claimRes >= targetRes) {
            const parent = cellToParent(hexId, targetRes);
            if (visibleSet.has(parent)) {
-             if (!aggregated[parent]) aggregated[parent] = { counts: {}, colors: {}, totalClaimed: 0 };
+             if (!aggregated[parent]) aggregated[parent] = { counts: {}, colors: {}, codes: {}, names: {}, totalClaimed: 0 };
              aggregated[parent].counts[claim.owner_id] = (aggregated[parent].counts[claim.owner_id] || 0) + 1;
              aggregated[parent].colors[claim.owner_id] = claim.country_color;
+             if (claim.country_code) aggregated[parent].codes[claim.owner_id] = claim.country_code;
+             if (claim.country_name) aggregated[parent].names[claim.owner_id] = claim.country_name;
              aggregated[parent].totalClaimed++;
            }
         }
@@ -295,6 +307,8 @@ const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<V
           cell,
           owner: dominantOwner,
           color: data.colors[dominantOwner],
+          countryCode: data.codes[dominantOwner] || null,
+          countryName: data.names[dominantOwner] || null,
           isAggregated: true,
           opacity: Math.min(0.8, 0.2 + (data.totalClaimed * 0.02))
         });
@@ -303,6 +317,8 @@ const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<V
           cell,
           owner: null,
           color: null,
+          countryCode: null,
+          countryName: null,
           isAggregated: true,
           opacity: 0.05
         });
@@ -312,12 +328,12 @@ const apiGetHexesInBounds = async (polygon: number[][], zoom: number): Promise<V
   return results;
 };
 
-const apiClaimHex = async (hexId: string, userId: string, color: string): Promise<DbHex> => {
+const apiClaimHex = async (hexId: string, userId: string, color: string, code: string, name: string): Promise<DbHex> => {
   await new Promise(resolve => setTimeout(resolve, 50));
   if (MOCK_DB.hexes[hexId]) {
     throw new Error("Hex already claimed");
   }
-  const newClaim = { hex_id: hexId, owner_id: userId, claimed_at: Date.now(), country_color: color };
+  const newClaim = { hex_id: hexId, owner_id: userId, claimed_at: Date.now(), country_color: color, country_code: code, country_name: name };
   MOCK_DB.hexes[hexId] = newClaim;
   saveDb();
   return newClaim;
@@ -449,17 +465,17 @@ export default function App() {
     
     // Optimistic UI Update
     setViewportData(prev => prev.map(h => 
-      h.cell === hexId ? { ...h, owner: 'player', color: selectedCountry.color, opacity: 0.4 } : h
+      h.cell === hexId ? { ...h, owner: 'player', color: selectedCountry.color, countryCode: selectedCountry.code, countryName: selectedCountry.name, opacity: 0.2 } : h
     ));
 
     try {
-      await apiClaimHex(hexId, 'player', selectedCountry.color);
+      await apiClaimHex(hexId, 'player', selectedCountry.color, selectedCountry.code, selectedCountry.name);
       setStats(apiGetStats());
     } catch (e) {
       console.error(e);
       // Revert optimistic update
       setViewportData(prev => prev.map(h => 
-        h.cell === hexId ? { ...h, owner: null, color: null, opacity: 0.1 } : h
+        h.cell === hexId ? { ...h, owner: null, color: null, countryCode: null, countryName: null, opacity: 0.1 } : h
       ));
     }
   };
@@ -506,7 +522,22 @@ export default function App() {
                   eventHandlers={{
                     click: () => handleHexClick(hex.cell, hex.isAggregated, hex.owner),
                   }}
-                />
+                >
+                  {hex.countryCode && (
+                    <Tooltip direction="center" permanent className="custom-tooltip">
+                      <div className="flex flex-col items-center justify-center pointer-events-none drop-shadow-md">
+                        <span className="text-xl leading-none" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
+                          {getFlagEmoji(hex.countryCode)}
+                        </span>
+                        {zoomLevel >= 11 && hex.countryName && (
+                          <span className="text-[8px] font-bold text-white uppercase tracking-wider mt-0.5" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9), 0 1px 1px rgba(0,0,0,0.9)' }}>
+                            {hex.countryName}
+                          </span>
+                        )}
+                      </div>
+                    </Tooltip>
+                  )}
+                </Polygon>
               );
             });
           })()}
@@ -537,7 +568,11 @@ export default function App() {
                 return (
                   <div key={p.id} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />
+                      {selectedCountry ? (
+                        <span className="text-lg leading-none">{getFlagEmoji(selectedCountry.code)}</span>
+                      ) : (
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />
+                      )}
                       <span className="text-slate-200">{p.name}</span>
                     </div>
                     <span className="font-mono text-slate-400">{count}</span>
@@ -571,7 +606,7 @@ export default function App() {
                 </button>
               )}
               <h2 className="text-3xl font-bold text-white mb-2 tracking-tight">Select Your Country</h2>
-              <p className="text-slate-400">Choose the country you represent. Your claimed hexes will use this color.</p>
+              <p className="text-slate-400">Choose the country you represent. Your claimed hexes will display its flag.</p>
             </div>
             
             <div className="relative mb-4">
@@ -597,10 +632,9 @@ export default function App() {
                   }}
                   className="flex items-center gap-3 p-3 rounded-xl border border-slate-700 bg-slate-900/50 hover:bg-slate-700 hover:border-slate-500 transition-all text-left group"
                 >
-                  <div 
-                    className="w-6 h-6 rounded-full shadow-sm border border-slate-600 group-hover:scale-110 transition-transform shrink-0" 
-                    style={{ backgroundColor: country.color }} 
-                  />
+                  <span className="text-2xl leading-none drop-shadow-md group-hover:scale-110 transition-transform shrink-0">
+                    {getFlagEmoji(country.code)}
+                  </span>
                   <span className="text-slate-200 font-medium text-sm truncate">{country.name}</span>
                 </button>
               ))}

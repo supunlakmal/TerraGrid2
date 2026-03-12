@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+.leaflet-tooltip.custom-tooltip {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.leaflet-tooltip-left.custom-tooltip::before,
+.leaflet-tooltip-right.custom-tooltip::before,
+.leaflet-tooltip-top.custom-tooltip::before,
+.leaflet-tooltip-bottom.custom-tooltip::before {
+  display: none !important;
+}
